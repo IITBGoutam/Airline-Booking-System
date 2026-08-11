@@ -61,16 +61,6 @@ curl -X POST http://localhost:8080/api/bookings \
   -d '{"flightId":2,"userId":1,"noOfSeats":2}'
 ```
 
-## How each resume claim maps to the code
-
-| Claim | Where it lives |
-|---|---|
-| **Microservices for Flights, Bookings & Auth (Node/Express/Postgres)** | `services/{auth,flight,booking,notification}-service`, all Express + Sequelize on Postgres |
-| **Normalized schemas & cross-service associations** | `flight-service` City→Airport→Flight and Airplane→Flight associations (`src/models/*.js`); bookings reference flight/user across services |
-| **Idempotent booking APIs, concurrency control, transactions to prevent double booking** | `booking-service/src/services/booking-service.js` (managed transaction + idempotency key) and `flight-service/src/repository/flight-repository.js` (`SELECT ... FOR UPDATE` row lock) |
-| **Kafka for async notifications & real-time availability, eventual consistency** | Producers in `*/utils/kafka/producer.js`, consumer in `notification-service/src/utils/kafka/consumer.js`; topics `booking-events`, `availability-events` |
-| **Dockerized, Nginx reverse gateway, k6 load testing** | `docker-compose.yml`, per-service `Dockerfile`, `api-gateway/nginx.conf`, `load-tests/*.js` |
-
 ## Load testing
 
 See [`load-tests/README.md`](load-tests/README.md). Highlight:
