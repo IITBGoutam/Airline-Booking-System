@@ -1,0 +1,130 @@
+name: airline-booking-system
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init-multiple-dbs.sql:/docker-entrypoint-initdb.d/init-multiple-dbs.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redpanda:
+    image: redpandadata/redpanda:v24.1.7
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --overprovisioned
+      - --memory=1G
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  auth-service:
+    build: ./services/auth-service
+    environment:
+      PORT: 3001
+      NODE_ENV: development
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: auth_db
+      JWT_SECRET: super-secret-change-me
+      JWT_EXPIRY: 1d
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3001:3001"
+
+  flight-service:
+    build: ./services/flight-service
+    environment:
+      PORT: 3000
+      NODE_ENV: development
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: flight_db
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_CLIENT_ID: flight-service
+      AVAILABILITY_TOPIC: availability-events
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+
+  booking-service:
+    build: ./services/booking-service
+    environment:
+      PORT: 3002
+      NODE_ENV: development
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: booking_db
+      FLIGHT_SERVICE_PATH: http://flight-service:3000
+      AUTH_SERVICE_PATH: http://auth-service:3001
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_CLIENT_ID: booking-service
+      BOOKING_TOPIC: booking-events
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      flight-service:
+        condition: service_started
+    ports:
+      - "3002:3002"
+
+  notification-service:
+    build: ./services/notification-service
+    environment:
+      PORT: 3003
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_CLIENT_ID: notification-service
+      KAFKA_GROUP_ID: notification-group
+      BOOKING_TOPIC: booking-events
+      AVAILABILITY_TOPIC: availability-events
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    ports:
+      - "3003:3003"
+
+  gateway:
+    build: ./api-gateway
+    depends_on:
+      - auth-service
+      - flight-service
+      - booking-service
+    ports:
+      - "8080:80"
+
+volumes:
+  pgdata:
